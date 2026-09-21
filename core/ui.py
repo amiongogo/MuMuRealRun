@@ -111,11 +111,14 @@ class TerminalDashboard:
             + (f" / 共 {self.target_laps} 圈" if self.target_laps > 0 else "")
         )
 
+        lat_offset = state.get("lateral_offset_m", 0.0)
+        lat_offset_str = f"{lat_offset:+.1f}m"
+
         col2_text = (
             f"[cyan]累计耗时:[/cyan] [bold white]{format_seconds(elapsed)}[/bold white]\n"
             f"[cyan]预估剩余:[/cyan] [bold yellow]{eta_str}[/bold yellow]\n"
             f"[cyan]估算步数:[/cyan] [bold white]{steps} 步[/bold white] (~170 spm)\n"
-            f"[cyan]当前坐标:[/cyan] [bold dim]{lng:.6f}, {lat:.6f}[/bold dim]"
+            f"[cyan]当前坐标:[/cyan] [bold dim]{lng:.6f}, {lat:.6f}[/bold dim] [dim]({lat_offset_str})[/dim]"
         )
 
         table.add_row(col1_text, col2_text)

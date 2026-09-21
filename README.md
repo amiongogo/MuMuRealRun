@@ -127,7 +127,9 @@ run:
   coord_type: "gcj02"        # 输入路线坐标系: gcj02(高德), wgs84(GPS), bd09(百度)
   speed_mps: 3.2             # 基础速度 (米/秒)
   speed_jitter_pct: 0.10     # 速度随机波动比例 (±10%)
-  gps_jitter_meters: 0.8     # GPS 自然飘移扰动 (米)
+  gps_jitter_meters: 0.6     # GPS 自然微弱高频抖动 (米)
+  lateral_variance_meters: 2.2 # 轨迹横向方差/跑道宽度 (米，建议 1.5~3.5 米，模拟多道次扩散)
+  lane_drift_per_lap: true   # 是否启用多圈道次自然漂移（跨圈时平滑变换内外道分布）
   slow_down_on_turns: true   # 弯道自动减速
   interval_sec: 1.0          # 定位刷新间隔(秒)
 
@@ -154,6 +156,7 @@ adb:
 | `--distance` | `-d` | 设定目标里程 (米) | `-d 2500` |
 | `--laps` | `-l` | 设定目标圈数 | `-l 5` |
 | `--coord-type` | `-c` | 输入路线坐标系 (`gcj02`/`wgs84`/`bd09`) | `-c gcj02` |
+| `--lateral-variance` | `-lv` | 设定横向方差与道次扩散范围 (米) | `-lv 2.5` |
 | `--vm-index` | `-v` | MuMu 模拟器实例编号 (默认 0) | `-v 0` |
 | `--mumu-path` | `-m` | 手动指定 MuMu 安装路径 | `-m "D:\Games\MuMu Player 12"` |
 | `--doctor` | | 运行环境诊断与接口自检 | `python main.py --doctor` |

@@ -264,6 +264,7 @@ def main():
     parser.add_argument("--distance", "-d", type=float, help="目标跑步里程 (米，如 2500)")
     parser.add_argument("--laps", "-l", type=int, help="目标圈数 (如 5)")
     parser.add_argument("--coord-type", "-c", type=str, choices=["gcj02", "wgs84", "bd09"], help="输入路线的坐标系")
+    parser.add_argument("--lateral-variance", "--lateral-var", "-lv", type=float, help="轨迹横向方差与道次扩散 (米，如 2.2)")
     parser.add_argument("--vm-index", "-v", type=int, help="目标 MuMu 模拟器多开编号 (默认 0)")
     parser.add_argument("--mumu-path", "-m", type=str, help="手动指定 MuMu 模拟器安装路径")
     parser.add_argument("--doctor", "--scan", action="store_true", help="运行环境自检与诊断")
@@ -297,6 +298,8 @@ def main():
         cfg.set("target.infinite_loop", False)
     if args.coord_type:
         cfg.set("run.coord_type", args.coord_type)
+    if args.lateral_variance is not None:
+        cfg.set("run.lateral_variance_meters", args.lateral_variance)
 
     if args.doctor:
         run_doctor(cfg)
@@ -366,7 +369,9 @@ def main():
     # 5. Setup Motion Simulation
     speed_mps = float(cfg.get("run.speed_mps", 3.2))
     speed_jitter = float(cfg.get("run.speed_jitter_pct", 0.10))
-    gps_jitter = float(cfg.get("run.gps_jitter_meters", 0.8))
+    gps_jitter = float(cfg.get("run.gps_jitter_meters", 0.6))
+    lateral_variance = float(cfg.get("run.lateral_variance_meters", 2.2))
+    lane_drift = bool(cfg.get("run.lane_drift_per_lap", True))
     turn_slowdown = bool(cfg.get("run.slow_down_on_turns", True))
     interval = float(cfg.get("run.interval_sec", 1.0))
 
@@ -382,6 +387,8 @@ def main():
         base_speed_mps=speed_mps,
         speed_jitter_pct=speed_jitter,
         gps_jitter_meters=gps_jitter,
+        lateral_variance_meters=lateral_variance,
+        lane_drift_per_lap=lane_drift,
         slow_down_on_turns=turn_slowdown,
         interval_sec=interval,
     )

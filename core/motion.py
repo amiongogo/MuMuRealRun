@@ -18,7 +18,9 @@ class MotionSimulator:
         route: Route,
         base_speed_mps: float = 3.2,
         speed_jitter_pct: float = 0.10,
-        gps_jitter_meters: float = 0.8,
+        gps_jitter_meters: float = 0.6,
+        lateral_variance_meters: float = 2.2,
+        lane_drift_per_lap: bool = True,
         slow_down_on_turns: bool = True,
         interval_sec: float = 1.0,
     ):
@@ -27,6 +29,8 @@ class MotionSimulator:
         self.current_speed = self.base_speed
         self.speed_jitter_pct = max(0.0, min(0.5, float(speed_jitter_pct)))
         self.gps_jitter_meters = max(0.0, float(gps_jitter_meters))
+        self.lateral_variance_meters = max(0.0, float(lateral_variance_meters))
+        self.lane_drift_per_lap = lane_drift_per_lap
         self.slow_down_on_turns = slow_down_on_turns
         self.interval_sec = max(0.1, float(interval_sec))
 
@@ -40,8 +44,19 @@ class MotionSimulator:
         self.lap_count = 1
         self.total_steps = 0
 
-        # Noise state (mean-reverting process for natural smooth speed curves)
+        # Speed noise state (mean-reverting process for natural smooth speed curves)
         self._speed_offset = 0.0
+
+        # Lateral dynamics state (2nd-order smooth cross-track wander & cross-lap lane spreading)
+        self._lateral_pos = 0.0
+        self._lateral_vel = 0.0
+        # Initial lap lane tendency (e.g. inside/middle lane)
+        self._current_lap_lane = (
+            random.uniform(-self.lateral_variance_meters * 0.2, self.lateral_variance_meters * 0.4)
+            if self.lane_drift_per_lap else 0.0
+        )
+        self._target_lap_lane = self._current_lap_lane
+        self._last_lateral_m = 0.0
 
         # Current coordinate
         p0 = self.route.points[0]
@@ -95,23 +110,62 @@ class MotionSimulator:
             diff = 360.0 - diff
         return diff
 
-    def _apply_gps_jitter(self, lng: float, lat: float, bearing: float) -> Tuple[float, float]:
-        """Apply tiny natural GPS multipath noise perpendicular to travel direction."""
-        if self.gps_jitter_meters <= 0.001:
-            return lng, lat
+    def _apply_lateral_and_gps_jitter(self, clean_lng: float, clean_lat: float, bearing: float) -> Tuple[float, float, float]:
+        """
+        Apply physically realistic lateral lane wander, cross-lap spreading,
+        and GPS sensor multipath noise perpendicular to travel direction.
+        Returns: (noisy_lng, noisy_lat, total_lateral_m)
+        """
+        dt = self.interval_sec
 
-        # Lateral jitter (perpendicular) + longitudinal jitter (along movement)
-        lat_noise_m = random.gauss(0.0, self.gps_jitter_meters * 0.7)
-        lon_noise_m = random.gauss(0.0, self.gps_jitter_meters * 0.4)
+        # 1. Smooth lap-level lane transition (gradually adjust lane tendency over ~15 seconds)
+        if self.lane_drift_per_lap:
+            alpha = min(1.0, dt / 15.0)
+            self._current_lap_lane += alpha * (self._target_lap_lane - self._current_lap_lane)
 
-        # Convert meters offset to latitude and longitude delta
-        # 1 deg lat ≈ 111,139 m
-        # 1 deg lng ≈ 111,139 * cos(lat) m
-        rad_lat = math.radians(lat)
-        d_lat = lat_noise_m / 111139.0
-        d_lng = lon_noise_m / (111139.0 * math.cos(rad_lat))
+        # 2. Continuous 2nd-order smooth intra-lap wander (damped spring-mass random walk)
+        if self.lateral_variance_meters > 0.01:
+            theta_v = 0.15   # Velocity damping
+            sigma_v = 0.08   # Acceleration perturbation
+            spring_k = 0.015 # Weak restoring force to prevent unbounded divergence
 
-        return lng + d_lng, lat + d_lat
+            restoring = -spring_k * self._lateral_pos
+            dw = random.gauss(0.0, 1.0)
+            self._lateral_vel += (-theta_v * self._lateral_vel + restoring) * dt + sigma_v * dw
+            # Limit lateral velocity to realistic human drift (max ~0.25 m/s)
+            self._lateral_vel = max(-0.25, min(0.25, self._lateral_vel))
+            self._lateral_pos += self._lateral_vel * dt
+            # Bound intra-lap position within ±75% of lateral variance
+            max_pos = self.lateral_variance_meters * 0.75
+            self._lateral_pos = max(-max_pos, min(max_pos, self._lateral_pos))
+        else:
+            self._lateral_pos = 0.0
+            self._lateral_vel = 0.0
+
+        # 3. High-frequency sensor noise (natural micro-jitter)
+        hf_lat_noise = random.gauss(0.0, self.gps_jitter_meters * 0.25) if self.gps_jitter_meters > 0 else 0.0
+        lon_noise_m = random.gauss(0.0, self.gps_jitter_meters * 0.20) if self.gps_jitter_meters > 0 else 0.0
+
+        # Total lateral offset (perpendicular to heading, positive = right/outer, negative = left/inner)
+        total_lateral_m = self._current_lap_lane + self._lateral_pos + hf_lat_noise
+        self._last_lateral_m = total_lateral_m
+
+        # 4. Vector projection onto normal and tangent directions
+        # Bearing theta is clockwise degrees from North
+        rad_b = math.radians(bearing)
+        sin_b = math.sin(rad_b)
+        cos_b = math.cos(rad_b)
+
+        # Normal vector (right): (cos_b, -sin_b)
+        # Tangent vector (forward): (sin_b, cos_b)
+        d_east_m = total_lateral_m * cos_b + lon_noise_m * sin_b
+        d_north_m = -total_lateral_m * sin_b + lon_noise_m * cos_b
+
+        rad_lat = math.radians(clean_lat)
+        d_lat = d_north_m / 111139.0
+        d_lng = d_east_m / (111139.0 * math.cos(rad_lat))
+
+        return clean_lng + d_lng, clean_lat + d_lat, total_lateral_m
 
     def step(self) -> Dict[str, Any]:
         """
@@ -142,6 +196,13 @@ class MotionSimulator:
                 if self.current_seg_index >= num_segs:
                     self.current_seg_index = 0
                     self.lap_count += 1
+                    if self.lane_drift_per_lap and self.lateral_variance_meters > 0:
+                        # Select a new lane target for the new lap (standard 400m track has 8 lanes)
+                        # Innermost rail is ~ -0.4*var, outer lanes expand outward (+ to the right)
+                        self._target_lap_lane = random.uniform(
+                            -self.lateral_variance_meters * 0.4,
+                            self.lateral_variance_meters * 1.1,
+                        )
 
         # Interpolate exact point on the current segment
         p1 = self.route.points[self.current_seg_index]
@@ -152,8 +213,8 @@ class MotionSimulator:
 
         bearing = calculate_bearing(p1.lng, p1.lat, p2.lng, p2.lat)
 
-        # Apply natural GPS jitter
-        noisy_lng, noisy_lat = self._apply_gps_jitter(clean_lng, clean_lat, bearing)
+        # Apply lateral dynamics and GPS jitter
+        noisy_lng, noisy_lat, lat_offset_m = self._apply_lateral_and_gps_jitter(clean_lng, clean_lat, bearing)
 
         self.current_lng = noisy_lng
         self.current_lat = noisy_lat
@@ -182,6 +243,7 @@ class MotionSimulator:
             "lat": self.current_lat,
             "raw_lng": clean_lng,
             "raw_lat": clean_lat,
+            "lateral_offset_m": round(lat_offset_m, 2),
             "speed_mps": speed,
             "speed_kmh": speed * 3.6,
             "pace_str": pace_str,
