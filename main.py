@@ -8,6 +8,8 @@ import sys
 import os
 import time
 import argparse
+import atexit
+import signal
 from typing import Optional
 
 # Ensure UTF-8 output on Windows consoles
@@ -17,6 +19,89 @@ if sys.platform == "win32":
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
+
+LOCK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".simulator.lock")
+
+
+def is_pid_alive(pid: int) -> bool:
+    """Check if a process with given PID is currently running."""
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            SYNCHRONIZE = 0x00100000
+            handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, False, pid)
+            if not handle:
+                return False
+            exit_code = ctypes.c_ulong()
+            ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+            ctypes.windll.kernel32.CloseHandle(handle)
+            return exit_code.value == 259
+        except Exception:
+            return False
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+
+def terminate_pid(pid: int):
+    """Terminate a lingering process by PID."""
+    try:
+        if sys.platform == "win32":
+            import ctypes
+            PROCESS_TERMINATE = 0x0001
+            handle = ctypes.windll.kernel32.OpenProcess(PROCESS_TERMINATE, False, pid)
+            if handle:
+                ctypes.windll.kernel32.TerminateProcess(handle, 1)
+                ctypes.windll.kernel32.CloseHandle(handle)
+        else:
+            os.kill(pid, signal.SIGTERM)
+    except Exception:
+        pass
+
+
+def acquire_instance_lock():
+    """
+    Ensure only one instance of MuMuRealRun is actively injecting coordinates.
+    If a previous background or zombie instance is found, terminate it and take over
+    to completely prevent concurrent GPS jitter/spikes.
+    """
+    my_pid = os.getpid()
+    if os.path.isfile(LOCK_FILE):
+        try:
+            with open(LOCK_FILE, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+            if content.isdigit():
+                old_pid = int(content)
+                if old_pid != my_pid and is_pid_alive(old_pid):
+                    print(f"⚠️ 检测到另一个模拟进程仍在运行 (PID: {old_pid})，正在自动终止以避免多进程坐标冲突...")
+                    terminate_pid(old_pid)
+                    time.sleep(0.5)
+        except Exception:
+            pass
+
+    try:
+        with open(LOCK_FILE, "w", encoding="utf-8") as f:
+            f.write(str(my_pid))
+    except Exception:
+        pass
+
+    def _release_lock():
+        try:
+            if os.path.isfile(LOCK_FILE):
+                with open(LOCK_FILE, "r", encoding="utf-8") as f:
+                    if f.read().strip() == str(my_pid):
+                        os.remove(LOCK_FILE)
+        except Exception:
+            pass
+
+    atexit.register(_release_lock)
+
 
 from core.config import Config
 from core.coord import convert_coordinates
@@ -222,6 +307,9 @@ def main():
         should_run = interactive_menu(cfg)
         if not should_run:
             return
+
+    # Ensure single instance to prevent conflicting GPS injection
+    acquire_instance_lock()
 
     # 1. Discover MuMu Environment
     env = MuMuLocator.discover_environment(cfg.get("mumu.path"))
