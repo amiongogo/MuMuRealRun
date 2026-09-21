@@ -1,5 +1,6 @@
 # MuMuRealRun - MuMu 安卓模拟器运动模拟器
 
+[![Release](https://img.shields.io/github/v/release/amiongogo/MuMuRealRun?color=green)](https://github.com/amiongogo/MuMuRealRun/releases)
 [![Python Version](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/platform-Windows-brightgreen.svg)](https://windows.microsoft.com/)
 [![MuMu Version](https://img.shields.io/badge/MuMu%20Player-12.0%2B-orange.svg)](https://mumu.163.com/)
