@@ -1,0 +1,14 @@
+[project]
+name = "mumu-real-run"
+version = "1.0.0"
+description = "Athletic running and GPS movement simulator for MuMu Android emulator"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "rich>=13.0.0",
+    "PyYAML>=6.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"

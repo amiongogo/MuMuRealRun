@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MuMuRealRun - 运动路线可视化编辑器</title>
+    <!-- Leaflet CSS & JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; background: #1a1a24; color: #fff; }
+        
+        /* Top Navigation Header */
+        header { background: #222232; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #33334d; z-index: 1000; box-shadow: 0 2px 10px rgba(0,0,0,0.3); }
+        .logo-title { display: flex; align-items: center; gap: 10px; }
+        .logo-title h1 { font-size: 18px; font-weight: 600; color: #4dabf7; }
+        .logo-title span { font-size: 13px; color: #868e96; }
+
+        .stats-bar { display: flex; gap: 20px; font-size: 14px; }
+        .stat-item { display: flex; align-items: center; gap: 6px; }
+        .stat-val { font-weight: bold; color: #51cf66; }
+
+        /* Main Workspace */
+        #workspace { display: flex; flex: 1; position: relative; overflow: hidden; }
+        #map { flex: 1; height: 100%; z-index: 1; }
+
+        /* Sidebar Control Panel */
+        #sidebar { width: 360px; background: #222232; padding: 18px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; z-index: 10; border-left: 1px solid #33334d; box-shadow: -2px 0 12px rgba(0,0,0,0.25); }
+        .panel-section { background: #2b2b3d; padding: 14px; border-radius: 8px; border: 1px solid #3a3a52; }
+        .section-title { font-size: 14px; font-weight: 600; margin-bottom: 10px; color: #a5d8ff; display: flex; justify-content: space-between; align-items: center; }
+
+        /* Mode Selector */
+        .mode-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+        .tab-btn { flex: 1; padding: 8px 10px; background: #1a1a24; border: 1px solid #3a3a52; color: #ced4da; border-radius: 6px; cursor: pointer; font-size: 13px; transition: all 0.2s; text-align: center; }
+        .tab-btn.active { background: #1971c2; border-color: #339af0; color: #fff; font-weight: 600; }
+
+        /* Buttons & Inputs */
+        .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 14px; border-radius: 6px; border: none; cursor: pointer; font-size: 13px; font-weight: 500; transition: background 0.2s; width: 100%; }
+        .btn-primary { background: #228be6; color: #fff; }
+        .btn-primary:hover { background: #1c7ed6; }
+        .btn-success { background: #2f9e44; color: #fff; }
+        .btn-success:hover { background: #2b8a3e; }
+        .btn-danger { background: #e03131; color: #fff; }
+        .btn-danger:hover { background: #c92a2a; }
+        .btn-secondary { background: #3a3a52; color: #e9ecef; }
+        .btn-secondary:hover { background: #4a4a68; }
+
+        .btn-group { display: flex; gap: 8px; margin-top: 8px; }
+
+        input, select { width: 100%; padding: 8px 10px; background: #1a1a24; border: 1px solid #3a3a52; color: #fff; border-radius: 6px; font-size: 13px; margin-bottom: 8px; }
+        input:focus, select:focus { border-color: #339af0; outline: none; }
+
+        .tip-box { font-size: 12px; color: #adb5bd; line-height: 1.5; background: #1a1a24; padding: 10px; border-radius: 6px; border-left: 3px solid #339af0; }
+
+        /* Coordinate Output Area */
+        textarea { width: 100%; height: 110px; background: #1a1a24; border: 1px solid #3a3a52; color: #74c0fc; font-family: monospace; font-size: 11px; padding: 8px; border-radius: 6px; resize: none; }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="logo-title">
+            <h1>🏃 MuMuRealRun 路线可视化生成器</h1>
+            <span>(支持标准400m操场跑道智能拟合与自定义路线拾取)</span>
+        </div>
+        <div class="stats-bar">
+            <div class="stat-item">总里程: <span id="stat-dist" class="stat-val">0.0 m</span></div>
+            <div class="stat-item">轨迹点数: <span id="stat-points" class="stat-val">0 个</span></div>
+            <div class="stat-item">闭环状态: <span id="stat-closed" class="stat-val">未闭合</span></div>
+        </div>
+    </header>
+
+    <div id="workspace">
+        <div id="map"></div>
+
+        <div id="sidebar">
+            <!-- Mode Switch -->
+            <div class="panel-section">
+                <div class="section-title">生成方式</div>
+                <div class="mode-tabs">
+                    <div id="tab-oval" class="tab-btn active" onclick="switchMode('oval')">🎯 操场跑道智能拟合</div>
+                    <div id="tab-free" class="tab-btn" onclick="switchMode('free')">✏️ 自由打点模式</div>
+                </div>
+
+                <!-- Oval Instructions -->
+                <div id="panel-oval-desc">
+                    <div class="tip-box" id="oval-step-tip">
+                        <strong>📌 操作步骤:</strong><br>
+                        在地图/卫星图上沿着跑道依次点击 <strong>3 个约束点</strong>：<br>
+                        1. <strong>直道起点</strong> (拐弯结束入直道处)<br>
+                        2. <strong>直道终点</strong> (直道结束入弯道处)<br>
+                        3. <strong>对向直道任意点</strong> (确定跑道宽度/弯道半径)<br>
+                        点击后系统将<strong>自动数学拟合为标准标准椭圆操场闭环</strong>！
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn btn-secondary" onclick="resetOvalPoints()">重置约束点</button>
+                    </div>
+                </div>
+
+                <!-- Freehand Instructions -->
+                <div id="panel-free-desc" style="display: none;">
+                    <div class="tip-box">
+                        <strong>📌 操作步骤:</strong><br>
+                        在地图上依次点击任意拐角或途经点，支持在任意道路连线。<br>
+                        点击下方“自动闭合回路”形成循环跑。
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn btn-secondary" onclick="closeFreeLoop()">闭合回路</button>
+                        <button class="btn btn-secondary" onclick="smoothPoints()">曲线平滑插值</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Route Manager & File Operations -->
+            <div class="panel-section">
+                <div class="section-title">
+                    <span>文件与保存</span>
+                </div>
+                <label style="font-size: 12px; color: #adb5bd; margin-bottom: 4px; display: block;">保存文件名 (相对项目根目录):</label>
+                <input type="text" id="route-filename" value="ZJGroute.txt" placeholder="例如: ZJGroute.txt 或 my_run.txt">
+
+                <div class="btn-group">
+                    <button class="btn btn-success" onclick="saveRouteToServer()">💾 直接保存至项目文件</button>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="loadRouteFromServer()">📂 载入当前项目已有路线</button>
+                    <button class="btn btn-danger" onclick="clearAll()">🗑️ 清空所有</button>
+                </div>
+            </div>
+
+            <!-- Code Preview & Export -->
+            <div class="panel-section">
+                <div class="section-title">
+                    <span>坐标 JSON 预览 (ZJGroute 格式)</span>
+                    <button class="btn btn-secondary" style="width: auto; padding: 4px 8px; font-size: 11px;" onclick="copyJson()">复制</button>
+                </div>
+                <textarea id="json-output" readonly placeholder="点击地图生成路线后，此处自动同步生成格式..."></textarea>
+                <div class="btn-group">
+                    <button class="btn btn-secondary" onclick="downloadFile()">⬇️ 下载路线文件 (.txt)</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Coordinate transforms (GCJ-02 <-> WGS-84)
+        const PI = Math.PI;
+        const A = 6378245.0;
+        const EE = 0.00669342162296594323;
+
+        function transformLat(x, y) {
+            let ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
+            ret += (20.0 * Math.sin(6.0 * x * PI) + 20.0 * Math.sin(2.0 * x * PI)) * 2.0 / 3.0;
+            ret += (20.0 * Math.sin(y * PI) + 40.0 * Math.sin(y / 3.0 * PI)) * 2.0 / 3.0;
+            ret += (160.0 * Math.sin(y / 12.0 * PI) + 320 * Math.sin(y * PI / 30.0)) * 2.0 / 3.0;
+            return ret;
+        }
+
+        function transformLon(x, y) {
+            let ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+            ret += (20.0 * Math.sin(6.0 * x * PI) + 20.0 * Math.sin(2.0 * x * PI)) * 2.0 / 3.0;
+            ret += (20.0 * Math.sin(x * PI) + 40.0 * Math.sin(x / 3.0 * PI)) * 2.0 / 3.0;
+            ret += (150.0 * Math.sin(x / 12.0 * PI) + 300.0 * Math.sin(x / 30.0 * PI)) * 2.0 / 3.0;
+            return ret;
+        }
+
+        function wgs84ToGcj02(lng, lat) {
+            let dLat = transformLat(lng - 105.0, lat - 35.0);
+            let dLon = transformLon(lng - 105.0, lat - 35.0);
+            let radLat = lat / 180.0 * PI;
+            let magic = Math.sin(radLat);
+            magic = 1 - EE * magic * magic;
+            let sqrtMagic = Math.sqrt(magic);
+            dLat = (dLat * 180.0) / ((A * (1 - EE)) / (magic * sqrtMagic) * PI);
+            dLon = (dLon * 180.0) / (A / sqrtMagic * Math.cos(radLat) * PI);
+            return [lng + dLon, lat + dLat];
+        }
+
+        function gcj02ToWgs84(lng, lat) {
+            let currLng = lng, currLat = lat;
+            for (let i = 0; i < 3; i++) {
+                let [mglng, mglat] = wgs84ToGcj02(currLng, currLat);
+                currLng += lng - mglng;
+                currLat += lat - mglat;
+            }
+            return [currLng, currLat];
+        }
+
+        function haversine(p1, p2) {
+            const R = 6371000;
+            const dLat = (p2.lat - p1.lat) * PI / 180;
+            const dLon = (p2.lng - p1.lng) * PI / 180;
+            const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                      Math.cos(p1.lat * PI / 180) * Math.cos(p2.lat * PI / 180) *
+                      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        }
+
+        // Initialize Map
+        const defaultCenter = [30.3112, 120.0887]; // ZJU ZJG Stadium
+        const map = L.map('map', { center: defaultCenter, zoom: 17 });
+
+        // Base tile layers (Amap Satellite & Normal)
+        const amapSatellite = L.tileLayer('https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}', {
+            subdomains: ['1', '2', '3', '4'],
+            maxZoom: 19,
+            attribution: '高德卫星底图'
+        }).addTo(map);
+
+        const amapRoad = L.tileLayer('https://webst0{s}.is.autonavi.com/appmaptile?style=8&x={x}&y={y}&z={z}', {
+            subdomains: ['1', '2', '3', '4'],
+            maxZoom: 19,
+            opacity: 0.8
+        }).addTo(map);
+
+        const amapNormal = L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
+            subdomains: ['1', '2', '3', '4'],
+            maxZoom: 19,
+            attribution: '高德普通路网'
+        });
+
+        L.control.layers({
+            "高德卫星影像图 (推荐操场看线)": amapSatellite,
+            "高德矢量道路图": amapNormal
+        }, {
+            "路网与地名标注": amapRoad
+        }, { position: 'topright' }).addTo(map);
+
+        // State variables
+        let currentMode = 'oval'; // 'oval' | 'free'
+        let ovalControlPoints = []; // [{lat, lng}, ...] max 3
+        let ovalMarkers = [];
+        let generatedTrackPoints = []; // [{lat, lng}, ...]
+        let trackPolyline = null;
+        let trackMarkers = [];
+
+        function switchMode(mode) {
+            currentMode = mode;
+            document.getElementById('tab-oval').classList.toggle('active', mode === 'oval');
+            document.getElementById('tab-free').classList.toggle('active', mode === 'free');
+            document.getElementById('panel-oval-desc').style.display = mode === 'oval' ? 'block' : 'none';
+            document.getElementById('panel-free-desc').style.display = mode === 'free' ? 'block' : 'none';
+        }
+
+        // Map Click Event
+        map.on('click', function(e) {
+            const pt = { lat: e.latlng.lat, lng: e.latlng.lng };
+
+            if (currentMode === 'oval') {
+                handleOvalClick(pt);
+            } else {
+                handleFreeClick(pt);
+            }
+        });
+
+        // Mode 1: Oval Track Fitting
+        function handleOvalClick(pt) {
+            if (ovalControlPoints.length >= 3) {
+                ovalControlPoints = [];
+                clearOvalMarkers();
+            }
+
+            ovalControlPoints.push(pt);
+            const marker = L.circleMarker([pt.lat, pt.lng], {
+                radius: 6,
+                color: '#ff6b6b',
+                fillColor: '#fa5252',
+                fillOpacity: 1.0
+            }).addTo(map);
+            marker.bindTooltip(`约束点 ${ovalControlPoints.length}`, { permanent: true, direction: 'top' });
+            ovalMarkers.push(marker);
+
+            if (ovalControlPoints.length === 1) {
+                document.getElementById('oval-step-tip').innerHTML = "<strong>第 1 点已定 (直道起点)</strong><br>👉 请点击直道另一端的 <strong>第 2 点 (直道终点)</strong>";
+            } else if (ovalControlPoints.length === 2) {
+                document.getElementById('oval-step-tip').innerHTML = "<strong>第 2 点已定 (直道终点)</strong><br>👉 请点击对向直道/弯道外缘的 <strong>第 3 点</strong> 确定跑道宽度";
+            } else if (ovalControlPoints.length === 3) {
+                document.getElementById('oval-step-tip').innerHTML = "<strong>✔ 3 个约束点已采集完毕！</strong><br>已自动拟合出 400m 标准跑道！可拖拽或在右侧保存。";
+                fitOvalTrack(ovalControlPoints[0], ovalControlPoints[1], ovalControlPoints[2]);
+            }
+        }
+
+        function resetOvalPoints() {
+            ovalControlPoints = [];
+            clearOvalMarkers();
+            document.getElementById('oval-step-tip').innerHTML = "<strong>📌 操作步骤:</strong><br>在地图/卫星图上沿着跑道依次点击 <strong>3 个约束点</strong>：<br>1. <strong>直道起点</strong><br>2. <strong>直道终点</strong><br>3. <strong>对向直道任意点</strong>";
+        }
+
+        function clearOvalMarkers() {
+            ovalMarkers.forEach(m => map.removeLayer(m));
+            ovalMarkers = [];
+        }
+
+        // Fit standard track from 3 points
+        function fitOvalTrack(P1, P2, P3) {
+            // P1: Straight 1 Start (A)
+            // P2: Straight 1 End (B)
+            // P3: Opposite side point (determines width vector)
+
+            // Vector AB along straight
+            const dx = P2.lng - P1.lng;
+            const dy = P2.lat - P1.lat;
+
+            // Project P3 onto line perpendicular to AB
+            const vLen = Math.sqrt(dx * dx + dy * dy);
+            if (vLen === 0) return;
+            const uX = dx / vLen;
+            const uY = dy / vLen;
+
+            // Normal perpendicular vector to AB (left side)
+            const nX = -uY;
+            const nY = uX;
+
+            // Vector P1 -> P3
+            const v13x = P3.lng - P1.lng;
+            const v13y = P3.lat - P1.lat;
+            const widthOffset = v13x * nX + v13y * nY;
+
+            // Opposite straight points: P4 (opposite B), P3_fitted (opposite A)
+            const P4 = { lng: P2.lng + nX * widthOffset, lat: P2.lat + nY * widthOffset };
+            const P3_fit = { lng: P1.lng + nX * widthOffset, lat: P1.lat + nY * widthOffset };
+
+            // Centers of semicircles
+            const C_right = { lng: (P2.lng + P4.lng) / 2, lat: (P2.lat + P4.lat) / 2 };
+            const C_left = { lng: (P1.lng + P3_fit.lng) / 2, lat: (P1.lat + P3_fit.lat) / 2 };
+            const radius = Math.abs(widthOffset) / 2;
+
+            const points = [];
+            const arcSteps = 10;
+            const straightSteps = 6;
+
+            // 1. Straight 1: P1 -> P2
+            for (let i = 0; i <= straightSteps; i++) {
+                const f = i / straightSteps;
+                points.push({ lng: P1.lng + dx * f, lat: P1.lat + dy * f });
+            }
+
+            // 2. Curve 1: Right semicircle from P2 to P4 around C_right
+            const baseAngleR = Math.atan2(P2.lat - C_right.lat, P2.lng - C_right.lng);
+            const sign = widthOffset >= 0 ? 1 : -1;
+            for (let i = 1; i <= arcSteps; i++) {
+                const theta = baseAngleR + sign * PI * (i / arcSteps);
+                points.push({
+                    lng: C_right.lng + radius * Math.cos(theta),
+                    lat: C_right.lat + radius * Math.sin(theta)
+                });
+            }
+
+            // 3. Straight 2: P4 -> P3_fit
+            const dxOpp = P3_fit.lng - P4.lng;
+            const dyOpp = P3_fit.lat - P4.lat;
+            for (let i = 1; i <= straightSteps; i++) {
+                const f = i / straightSteps;
+                points.push({ lng: P4.lng + dxOpp * f, lat: P4.lat + dyOpp * f });
+            }
+
+            // 4. Curve 2: Left semicircle from P3_fit back to P1 around C_left
+            const baseAngleL = Math.atan2(P3_fit.lat - C_left.lat, P3_fit.lng - C_left.lng);
+            for (let i = 1; i < arcSteps; i++) {
+                const theta = baseAngleL + sign * PI * (i / arcSteps);
+                points.push({
+                    lng: C_left.lng + radius * Math.cos(theta),
+                    lat: C_left.lat + radius * Math.sin(theta)
+                });
+            }
+
+            // Close the loop
+            points.push({ lng: P1.lng, lat: P1.lat });
+
+            setTrackPoints(points);
+        }
+
+        // Mode 2: Freehand Path
+        function handleFreeClick(pt) {
+            generatedTrackPoints.push(pt);
+            renderTrack();
+        }
+
+        function closeFreeLoop() {
+            if (generatedTrackPoints.length >= 3) {
+                const first = generatedTrackPoints[0];
+                const last = generatedTrackPoints[generatedTrackPoints.length - 1];
+                if (haversine(first, last) > 5) {
+                    generatedTrackPoints.push({ lng: first.lng, lat: first.lat });
+                }
+                renderTrack();
+            }
+        }
+
+        function smoothPoints() {
+            if (generatedTrackPoints.length < 3) return;
+            const smoothed = [];
+            const pts = generatedTrackPoints;
+            for (let i = 0; i < pts.length - 1; i++) {
+                smoothed.push(pts[i]);
+                const mid = {
+                    lng: (pts[i].lng + pts[i+1].lng) / 2,
+                    lat: (pts[i].lat + pts[i+1].lat) / 2
+                };
+                smoothed.push(mid);
+            }
+            smoothed.push(pts[pts.length - 1]);
+            setTrackPoints(smoothed);
+        }
+
+        function setTrackPoints(points) {
+            generatedTrackPoints = points;
+            renderTrack();
+        }
+
+        function renderTrack() {
+            // Remove previous polyline
+            if (trackPolyline) {
+                map.removeLayer(trackPolyline);
+            }
+            trackMarkers.forEach(m => map.removeLayer(m));
+            trackMarkers = [];
+
+            if (generatedTrackPoints.length === 0) {
+                updateStats(0, 0, false);
+                document.getElementById('json-output').value = "";
+                return;
+            }
+
+            const latlngs = generatedTrackPoints.map(p => [p.lat, p.lng]);
+            trackPolyline = L.polyline(latlngs, {
+                color: '#339af0',
+                weight: 5,
+                opacity: 0.9,
+                dashArray: null
+            }).addTo(map);
+
+            // Add start/end marker
+            if (generatedTrackPoints.length > 0) {
+                const startPt = generatedTrackPoints[0];
+                const startMarker = L.circleMarker([startPt.lat, startPt.lng], {
+                    radius: 8,
+                    color: '#2b8a3e',
+                    fillColor: '#51cf66',
+                    fillOpacity: 1
+                }).addTo(map).bindTooltip("起点 (Start)", { permanent: true, direction: "bottom" });
+                trackMarkers.push(startMarker);
+            }
+
+            // Calculate distance & stats
+            let totalDist = 0;
+            for (let i = 0; i < generatedTrackPoints.length - 1; i++) {
+                totalDist += haversine(generatedTrackPoints[i], generatedTrackPoints[i+1]);
+            }
+
+            const isClosed = generatedTrackPoints.length >= 3 &&
+                haversine(generatedTrackPoints[0], generatedTrackPoints[generatedTrackPoints.length - 1]) < 10;
+
+            updateStats(totalDist, generatedTrackPoints.length, isClosed);
+            updateJsonOutput();
+        }
+
+        function updateStats(distM, count, isClosed) {
+            document.getElementById('stat-dist').textContent = distM.toFixed(1) + " m";
+            document.getElementById('stat-points').textContent = count + " 个";
+            const closedSpan = document.getElementById('stat-closed');
+            closedSpan.textContent = isClosed ? "已闭合" : "未闭合";
+            closedSpan.style.color = isClosed ? "#51cf66" : "#ff6b6b";
+        }
+
+        function formatZJGString() {
+            return generatedTrackPoints.map(p => `{"lng":"${p.lng}","lat":"${p.lat}"}`).join(',');
+        }
+
+        function updateJsonOutput() {
+            document.getElementById('json-output').value = formatZJGString();
+        }
+
+        function clearAll() {
+            generatedTrackPoints = [];
+            ovalControlPoints = [];
+            clearOvalMarkers();
+            renderTrack();
+        }
+
+        function copyJson() {
+            const txt = document.getElementById('json-output').value;
+            if (!txt) {
+                alert("当前没有可复制的轨迹！");
+                return;
+            }
+            navigator.clipboard.writeText(txt).then(() => {
+                alert("已成功复制路线坐标到剪贴板！");
+            });
+        }
+
+        function downloadFile() {
+            const txt = document.getElementById('json-output').value;
+            if (!txt) {
+                alert("请先绘制路线！");
+                return;
+            }
+            const fname = document.getElementById('route-filename').value.trim() || 'my_route.txt';
+            const blob = new Blob([txt], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fname;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // Save directly to server
+        async function saveRouteToServer() {
+            const txt = document.getElementById('json-output').value;
+            if (!txt) {
+                alert("当前没有轨迹可保存！请先在地图上生成路线。");
+                return;
+            }
+            const fname = document.getElementById('route-filename').value.trim() || 'ZJGroute.txt';
+
+            try {
+                const res = await fetch('/api/save_route', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename: fname, content: txt })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    alert(`✔ 路线已成功保存至项目文件: ${data.filepath}\n现在可以直接在 start.bat 或 main.py 中使用！`);
+                } else {
+                    alert("保存失败: " + data.error);
+                }
+            } catch (err) {
+                alert("无法连接到本地服务，建议使用【下载路线文件】保存。");
+            }
+        }
+
+        // Load existing route from server
+        async function loadRouteFromServer() {
+            const fname = document.getElementById('route-filename').value.trim() || 'ZJGroute.txt';
+            try {
+                const res = await fetch(`/api/load_route?filename=${encodeURIComponent(fname)}`);
+                const data = await res.json();
+                if (data.success) {
+                    const pts = data.points.map(p => ({ lat: p.lat, lng: p.lng }));
+                    setTrackPoints(pts);
+                    if (pts.length > 0) {
+                        map.panTo([pts[0].lat, pts[0].lng]);
+                    }
+                    alert(`✔ 成功载入路线文件: ${fname} (共 ${pts.length} 个坐标点)`);
+                } else {
+                    alert("载入失败: " + data.error);
+                }
+            } catch (err) {
+                alert("载入失败: " + err);
+            }
+        }
+
+        // Try to load initial route on startup if present
+        window.addEventListener('DOMContentLoaded', () => {
+            loadRouteFromServer();
+        });
+    </script>
+</body>
+</html>
