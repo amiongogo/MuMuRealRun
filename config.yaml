@@ -71,5 +71,5 @@ adb:
   # 是否在启动时自动连接 ADB
   auto_connect: true
   # 目标 App 包名（可选，如果填写，运行状态栏会显示该 App 是否处于前台）
-  # 例如 咪咕爱体育/高校体育包名: "net.crigh.mysport"
-  target_package: "net.crigh.mysport"
+  # 例如: "com.example.app"
+  target_package: ""
